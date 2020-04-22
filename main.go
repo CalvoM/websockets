@@ -1,5 +1,12 @@
 package main
-import "github.com/CalvoM/websockets/wsserver"
+
+import (
+	"fmt"
+
+	"github.com/CalvoM/websockets/wsserver"
+)
+
 func main() {
-wsserver.ServerTest()
+	fmt.Println("Server loading...")
+	wsserver.RunServer()
 }
