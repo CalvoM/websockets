@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ws</title>
+    <style>
+        body{
+            height:100%;
+            width:100%;
+            padding:1em;
+        }
+        p.serverMsg{
+            width:10%;
+            background-color: #ded;
+            padding:1em;
+            margin-left:1em;
+            word-wrap:break-word;
+        }
+        p.clientMsg{
+            
+            width:10%;
+            background-color: rgb(238, 143, 34);
+            padding:1em;
+            margin-left: 10%;
+            color:black;
+            word-wrap:break-word;
+        }
+        p.clientMsg::after{
+            content: "Me";
+            padding-left: 70%;
+            font-size: 80%;
+            font-family: Manjari;
+            word-wrap: none;
+        }
+        input{
+            padding:0.7em;
+            text-align: right;
+            border:1px solid #ddd;
+            border-radius: 0;
+        }
+        #sendBtn{
+            padding: 0.7em 1em;
+            border: none;
+            background-color: greenyellow;
+        }
+        #inputArea{
+            position: sticky;
+            bottom:2em;
+            right:0;
+            left:0;
+            width:20%;
+            margin:1.5em auto;
+            padding:0.9em;
+            background-color:#eee;
+            text-align: center;
+            box-shadow: 2px 0px 0.6em 0.2em #ccc;
+        }
+        #MsgBoard{
+            position: static;
+            height:100%;
+            width:100%;
+            right:0;
+            left:0;
+        }
+    </style>
+</head>
+<body>
+    <div id="MsgBoard"></div>
+    <p id="inputArea">
+        <input type="text" placeholder="What is on your mind?" id="clientMsg">
+        <button id="sendBtn">Send</button>
+    </p>
+<script>
+    const MsgBoard = document.querySelector("#MsgBoard")
+    const clientMsg = document.querySelector("input#clientMsg")
+    const sendBtn = document.querySelector("button#sendBtn")
+    let socket = new WebSocket("ws://localhost:6062");
+    socket.onmessage = function(event){
+        console.log("received",event.data)
+        let msgBox = document.createElement("p")
+        msgBox.classList.add("serverMsg")
+        let msgText = document.createTextNode(event.data)
+        msgBox.appendChild(msgText)
+        MsgBoard.appendChild(msgBox) 
+    }
+    sendBtn.addEventListener("click",(ev)=>{getInput()},false)
+    clientMsg.addEventListener('keyup',(ev)=>{
+        if(ev.keyCode==13){
+            getInput()
+        }
+    })
+    function getInput(){
+        let msg = clientMsg.value;
+        if (msg.length == 0) {
+            alert("Unfortunately, we cannot send empty messages")
+            return
+        }
+        let msgBox = document.createElement("p")
+        msgBox.classList.add("clientMsg")
+        //let msgText = document.createTextNode(msg)
+        msgBox.innerHTML=msg
+        //msgBox.appendChild(msgText)
+        MsgBoard.appendChild(msgBox)
+        socket.send(msg)
+        clientMsg.value = ""
+    }
+</script>
+</body>
+</html>
