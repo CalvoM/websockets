@@ -14,15 +14,16 @@ import (
 type WSServer struct {
 }
 
-var dataFrame = Frame{}
+var client = Frame{}
+var server = Frame{}
 
 func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	err := dataFrame.CheckHeaders(r, clientRequiredHeaders)
+	err := client.CheckHeaders(r, clientRequiredHeaders)
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	SendHandShake(r, w, dataFrame)
+	SendHandShake(r, w, client)
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijack not supported", http.StatusInternalServerError)
@@ -35,8 +36,7 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x66})
-	bufrw.Flush()
+	server.Send("Welcome to the chat room", bufrw)
 	recvbuffer := []byte{}
 	for {
 		s, err := bufrw.ReadByte()
@@ -45,8 +45,9 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		recvbuffer = append(recvbuffer, s)
-		dataFrame.DecodeBytes(bufrw, &recvbuffer)
-
+		client.DecodeBytes(bufrw, &recvbuffer)
+		// bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
+		// bufrw.Flush()
 	}
 
 }
@@ -59,11 +60,11 @@ type Frame struct {
 	Mask       byte
 	PayloadLen uint64
 	Key        uint32
-	PayLoad    uint64
+	PayLoad    []byte
 }
 
 const (
-	GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" // RFC 6455 1.3
+	uuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" // RFC 6455 1.3
 )
 
 var (
@@ -106,9 +107,9 @@ func SendHandShake(r *http.Request, w http.ResponseWriter, f Frame) {
 
 //GetKeyResponse :
 func (f *Frame) GetKeyResponse(key string) string {
-	keyGUID := key + GUID
-	encryptedkeyGUID := sha1.Sum([]byte(keyGUID))
-	transformedKey := encryptedkeyGUID[:]
+	keyuuid := key + uuid
+	encryptedkeyuuid := sha1.Sum([]byte(keyuuid))
+	transformedKey := encryptedkeyuuid[:]
 	encodedKeyStr := base64.StdEncoding.EncodeToString(transformedKey)
 	return encodedKeyStr
 }
@@ -131,10 +132,12 @@ func (f *Frame) DecodeBytes(b *bufio.ReadWriter, data *[]byte) {
 		}
 		if f.PayloadLen == 126 && len(*data) == 4 {
 			f.PayloadLen = uint64(binary.BigEndian.Uint16((*data)[2:4]))
+			fmt.Println("Length:", f.PayloadLen)
 			maxFrameFields += (2 + 2 + 4 + int(f.PayloadLen))
 		}
 		if f.PayloadLen == 127 && len(*data) == 10 {
 			f.PayloadLen = binary.BigEndian.Uint64((*data)[2:10])
+			fmt.Println("Length:", f.PayloadLen)
 			maxFrameFields += (2 + 8 + 4 + int(f.PayloadLen))
 		}
 	}
@@ -161,6 +164,7 @@ func (f *Frame) DecryptMessage(data []byte) {
 		fmt.Println("<<", string(message))
 	}
 	if f.PayloadLen == 126 {
+		fmt.Println("==126")
 		keys := data[4:8]
 		message := make([]byte, 0)
 		var i uint64 = 0
@@ -171,6 +175,64 @@ func (f *Frame) DecryptMessage(data []byte) {
 		}
 		fmt.Println("<<", string(message))
 	}
+	if f.PayloadLen == 127 {
+		keys := data[10:14]
+		message := make([]byte, 0)
+		var i uint64 = 0
+		for i < f.PayloadLen {
+			letter := data[8+i] ^ keys[0+(i%4)]
+			message = append(message, letter)
+			i++
+		}
+		fmt.Println("<<", string(message))
+	}
+}
+
+//Send :
+func (f *Frame) Send(message string, b *bufio.ReadWriter) {
+	f.Fin = 0b1000
+	f.Rsv = 0b0000
+	f.Opcode = 0b0001
+	FinRsv := f.Fin | f.Rsv
+	octet1 := FinRsv
+	octet1 <<= 4
+	octet1 |= uint8(f.Opcode)
+	b.Write([]byte{octet1})
+	b.Flush()
+	f.Mask = 0b0000
+	octet2 := f.Mask
+	octet2 <<= 4
+	if len(message) < 125 {
+		f.PayloadLen = uint64(len(message))
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+	} else if len(message) >= 126 && len(message) < 65536 {
+		f.PayloadLen = 126
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+		l := make([]byte, 2)
+		binary.BigEndian.PutUint16(l, uint16(len(message)))
+		b.Write(l)
+
+	} else {
+		f.PayloadLen = 127
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+		l := make([]byte, 8)
+		binary.BigEndian.PutUint64(l, uint64(len(message)))
+		b.Write(l)
+
+	}
+	f.PayloadLen = uint64(len(message))
+	f.PayLoad = []byte(message)
+	b.Write(f.PayLoad)
+	b.Flush()
+	l := make([]byte, 8)
+	binary.BigEndian.PutUint16(l, uint16(len(message)))
+	b.Write(l)
 }
 
 // RunServer :
