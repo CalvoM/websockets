@@ -14,15 +14,16 @@ import (
 type WSServer struct {
 }
 
-var dataFrame = Frame{}
+var client = Frame{}
+var server = Frame{}
 
 func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	err := dataFrame.CheckHeaders(r, clientRequiredHeaders)
+	err := client.CheckHeaders(r, clientRequiredHeaders)
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
 	}
-	SendHandShake(r, w, dataFrame)
+	SendHandShake(r, w, client)
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijack not supported", http.StatusInternalServerError)
@@ -35,18 +36,20 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x66})
+	bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
 	bufrw.Flush()
 	recvbuffer := []byte{}
 	for {
-		s, err := bufrw.ReadByte()
-		if err != nil {
-			log.Printf("error reading string: %v", err)
-			return
+		if s, err := bufrw.ReadByte(); s > 0 {
+			if err != nil {
+				log.Printf("error reading string: %v", err)
+				return
+			}
+			recvbuffer = append(recvbuffer, s)
+			client.DecodeBytes(bufrw, &recvbuffer)
 		}
-		recvbuffer = append(recvbuffer, s)
-		dataFrame.DecodeBytes(bufrw, &recvbuffer)
-
+		bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
+		bufrw.Flush()
 	}
 
 }
@@ -63,7 +66,7 @@ type Frame struct {
 }
 
 const (
-	GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" // RFC 6455 1.3
+	uuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" // RFC 6455 1.3
 )
 
 var (
@@ -106,9 +109,9 @@ func SendHandShake(r *http.Request, w http.ResponseWriter, f Frame) {
 
 //GetKeyResponse :
 func (f *Frame) GetKeyResponse(key string) string {
-	keyGUID := key + GUID
-	encryptedkeyGUID := sha1.Sum([]byte(keyGUID))
-	transformedKey := encryptedkeyGUID[:]
+	keyuuid := key + uuid
+	encryptedkeyuuid := sha1.Sum([]byte(keyuuid))
+	transformedKey := encryptedkeyuuid[:]
 	encodedKeyStr := base64.StdEncoding.EncodeToString(transformedKey)
 	return encodedKeyStr
 }
@@ -162,6 +165,17 @@ func (f *Frame) DecryptMessage(data []byte) {
 	}
 	if f.PayloadLen == 126 {
 		keys := data[4:8]
+		message := make([]byte, 0)
+		var i uint64 = 0
+		for i < f.PayloadLen {
+			letter := data[8+i] ^ keys[0+(i%4)]
+			message = append(message, letter)
+			i++
+		}
+		fmt.Println("<<", string(message))
+	}
+	if f.PayloadLen == 127 {
+		keys := data[10:14]
 		message := make([]byte, 0)
 		var i uint64 = 0
 		for i < f.PayloadLen {
