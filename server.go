@@ -36,20 +36,18 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
-	bufrw.Flush()
+	server.Send("Hello Boy", bufrw)
 	recvbuffer := []byte{}
 	for {
-		if s, err := bufrw.ReadByte(); s > 0 {
-			if err != nil {
-				log.Printf("error reading string: %v", err)
-				return
-			}
-			recvbuffer = append(recvbuffer, s)
-			client.DecodeBytes(bufrw, &recvbuffer)
+		s, err := bufrw.ReadByte()
+		if err != nil {
+			log.Printf("error reading string: %v", err)
+			return
 		}
-		bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
-		bufrw.Flush()
+		recvbuffer = append(recvbuffer, s)
+		client.DecodeBytes(bufrw, &recvbuffer)
+		// bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
+		// bufrw.Flush()
 	}
 
 }
@@ -62,7 +60,7 @@ type Frame struct {
 	Mask       byte
 	PayloadLen uint64
 	Key        uint32
-	PayLoad    uint64
+	PayLoad    []byte
 }
 
 const (
@@ -134,10 +132,12 @@ func (f *Frame) DecodeBytes(b *bufio.ReadWriter, data *[]byte) {
 		}
 		if f.PayloadLen == 126 && len(*data) == 4 {
 			f.PayloadLen = uint64(binary.BigEndian.Uint16((*data)[2:4]))
+			fmt.Println("Length:", f.PayloadLen)
 			maxFrameFields += (2 + 2 + 4 + int(f.PayloadLen))
 		}
 		if f.PayloadLen == 127 && len(*data) == 10 {
 			f.PayloadLen = binary.BigEndian.Uint64((*data)[2:10])
+			fmt.Println("Length:", f.PayloadLen)
 			maxFrameFields += (2 + 8 + 4 + int(f.PayloadLen))
 		}
 	}
@@ -164,6 +164,7 @@ func (f *Frame) DecryptMessage(data []byte) {
 		fmt.Println("<<", string(message))
 	}
 	if f.PayloadLen == 126 {
+		fmt.Println("==126")
 		keys := data[4:8]
 		message := make([]byte, 0)
 		var i uint64 = 0
@@ -185,6 +186,53 @@ func (f *Frame) DecryptMessage(data []byte) {
 		}
 		fmt.Println("<<", string(message))
 	}
+}
+
+//Send :
+func (f *Frame) Send(message string, b *bufio.ReadWriter) {
+	f.Fin = 0b1000
+	f.Rsv = 0b0000
+	f.Opcode = 0b0001
+	FinRsv := f.Fin | f.Rsv
+	octet1 := FinRsv
+	octet1 <<= 4
+	octet1 |= uint8(f.Opcode)
+	b.Write([]byte{octet1})
+	b.Flush()
+	f.Mask = 0b0000
+	octet2 := f.Mask
+	octet2 <<= 4
+	if len(message) < 125 {
+		f.PayloadLen = uint64(len(message))
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+	} else if len(message) >= 126 && len(message) < 65536 {
+		f.PayloadLen = 126
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+		l := make([]byte, 2)
+		binary.BigEndian.PutUint16(l, uint16(len(message)))
+		b.Write(l)
+
+	} else {
+		f.PayloadLen = 127
+		octet2 |= uint8(f.PayloadLen)
+		b.Write([]byte{octet2})
+		b.Flush()
+		l := make([]byte, 8)
+		binary.BigEndian.PutUint64(l, uint64(len(message)))
+		b.Write(l)
+
+	}
+	f.PayloadLen = uint64(len(message))
+	f.PayLoad = []byte(message)
+	b.Write(f.PayLoad)
+	b.Flush()
+	l := make([]byte, 8)
+	binary.BigEndian.PutUint16(l, uint16(len(message)))
+	b.Write(l)
 }
 
 // RunServer :
