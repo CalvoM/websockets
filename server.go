@@ -36,7 +36,7 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	server.Send("Hello Boy", bufrw)
+	server.Send("Welcome to the chat room", bufrw)
 	recvbuffer := []byte{}
 	for {
 		s, err := bufrw.ReadByte()
