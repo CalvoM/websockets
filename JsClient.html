@@ -83,6 +83,9 @@
         msgBox.appendChild(msgText)
         MsgBoard.appendChild(msgBox) 
     }
+    socket.onclose = function(event){
+        console.log("Closing",event)
+    }
     sendBtn.addEventListener("click",(ev)=>{getInput()},false)
     clientMsg.addEventListener('keyup',(ev)=>{
         if(ev.keyCode==13){

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 )
 
 // WSServer :Handles http server states
@@ -18,38 +19,41 @@ var client = Frame{}
 var server = Frame{}
 
 func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	err := client.CheckHeaders(r, clientRequiredHeaders)
-	if err != nil {
-		fmt.Println(err)
-		w.WriteHeader(http.StatusBadRequest)
-	}
-	SendHandShake(r, w, client)
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "Hijack not supported", http.StatusInternalServerError)
-	}
-	//After handshake, let us go to TCP level
-	conn, bufrw, err := hj.Hijack()
-	//close the connection after all things
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer conn.Close()
-	server.Send("Welcome to the chat room", bufrw)
-	recvbuffer := []byte{}
-	for {
-		s, err := bufrw.ReadByte()
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func(w http.ResponseWriter, r *http.Request, wg *sync.WaitGroup) {
+		err := client.CheckHeaders(r, clientRequiredHeaders)
 		if err != nil {
-			log.Printf("error reading string: %v", err)
+			fmt.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		SendHandShake(r, w, client)
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "Hijack not supported", http.StatusInternalServerError)
+		}
+		//After handshake, let us go to TCP level
+		conn, bufrw, err := hj.Hijack()
+		//close the connection after all things
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		recvbuffer = append(recvbuffer, s)
-		client.DecodeBytes(bufrw, &recvbuffer)
-		// bufrw.Write([]byte{0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f})
-		// bufrw.Flush()
-	}
-
+		defer conn.Close()
+		server.Send("Welcome to the chat room", bufrw)
+		recvbuffer := []byte{}
+		for {
+			s, err := bufrw.ReadByte()
+			if err != nil {
+				log.Printf("error reading string: %v", err)
+				return
+			}
+			recvbuffer = append(recvbuffer, s)
+			client.DecodeBytes(bufrw, &recvbuffer)
+		}
+		wg.Done()
+	}(w, r, wg)
+	wg.Wait()
 }
 
 // Frame :Handle the Data Frame
@@ -164,7 +168,6 @@ func (f *Frame) DecryptMessage(data []byte) {
 		fmt.Println("<<", string(message))
 	}
 	if f.PayloadLen == 126 {
-		fmt.Println("==126")
 		keys := data[4:8]
 		message := make([]byte, 0)
 		var i uint64 = 0
@@ -192,7 +195,12 @@ func (f *Frame) DecryptMessage(data []byte) {
 func (f *Frame) Send(message string, b *bufio.ReadWriter) {
 	f.Fin = 0b1000
 	f.Rsv = 0b0000
-	f.Opcode = 0b0001
+	if message == "Bye" {
+		f.Opcode = 0b1000
+	} else {
+		f.Opcode = 0b0001
+	}
+
 	FinRsv := f.Fin | f.Rsv
 	octet1 := FinRsv
 	octet1 <<= 4
